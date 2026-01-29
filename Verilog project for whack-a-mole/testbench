@@ -1,0 +1,73 @@
+module wam_m_tb();
+reg clk;
+reg clr;
+reg lft;
+reg rgt;
+reg pse;
+reg [7:0] sw;
+wire [3:0] an;
+wire [6:0] a2g;
+wire [7:0] ld;
+// Instantiate the Unit Under Test (UUT)
+wam_m uut (.clk(clk), .clr(clr),.lft(lft), .rgt(rgt),.pse(pse), .sw(sw), .an(an), .a2g(a2g), .ld(ld));
+// Clock generation (50 MHz)
+initial 
+  begin
+    clk = 0;
+  forever 
+     #10 clk = ~clk; // 20 ns period => 50 MHz
+end
+// Test sequence
+initial 
+  begin
+    // Initialize inputs
+    clr = 0;
+    lft = 0;
+    rgt = 0;
+    pse = 0;
+    sw = 8'b0;
+    // Simulation start delay
+    #50;
+    // Reset the system
+    clr = 1;
+    #20;
+    clr = 0;
+    // Simulate left button press (reduce difficulty)
+    #100;
+    lft = 1;
+    #20;
+    lft = 0;
+    // Simulate right button press (increase difficulty)
+    #100;
+    rgt = 1;
+    #20;
+    rgt = 0;
+    // Simulate pause button press
+    #200;
+    pse = 1;
+    #20;
+    pse = 0;
+    // Simulate switch taps
+    #300;
+    sw = 8'b00000001; // Simulate a tap on hole 0
+    #40;
+    sw = 8'b00000000;
+    #100;
+    sw = 8'b00000010; // Simulate a tap on hole 1
+    #40;
+    sw = 8'b00000000;
+    #100;
+    sw = 8'b10000000; // Simulate a tap on hole 7
+    #40;
+    sw = 8'b00000000;
+    // Add more taps or button presses as needed
+    #500;
+    // Reset the system again
+    clr = 1;
+    #20;
+    clr = 0;
+    // End simulation after some time
+    #1000;
+    $stop;
+  end
+endmodule
