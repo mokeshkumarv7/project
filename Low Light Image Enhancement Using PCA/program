@@ -1,0 +1,211 @@
+# Import necessary libraries
+import cv2
+import numpy as np
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+
+# Load the image
+image_path = '/content/amed.jpeg'  # Replace with your image path
+image = cv2.imread(image_path)
+image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+# Display the original image
+plt.imshow(image_rgb)
+plt.title('Original Image')
+plt.axis('off')
+plt.show()
+
+# Reshape the image for PCA: (H*W, 3) where H and W are height and width
+H, W, C = image_rgb.shape
+reshaped_image = image_rgb.reshape(-1, 3)
+
+# Apply PCA to decompose into luminance and chrominance components
+pca = PCA(n_components=3)
+pca_components = pca.fit_transform(reshaped_image)
+
+# Separate the principal components
+luminance = pca_components[:, 0].reshape(H, W)
+chrominance1 = pca_components[:, 1].reshape(H, W)
+chrominance2 = pca_components[:, 2].reshape(H, W)
+
+# Display the components
+fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+ax[0].imshow(luminance, cmap='gray')
+ax[0].set_title('Luminance Component')
+ax[0].axis('off')
+
+ax[1].imshow(chrominance1, cmap='gray')
+ax[1].set_title('Chrominance Component 1')
+ax[1].axis('off')
+
+ax[2].imshow(chrominance2, cmap='gray')
+ax[2].set_title('Chrominance Component 2')
+ax[2].axis('off')
+
+plt.show()
+
+
+# Function to apply CLAHE and gamma correction for enhanced luminance
+def enhance_luminance_advanced(luminance):
+    # Convert luminance to 8-bit format for CLAHE
+    luminance_8bit = np.uint8(cv2.normalize(luminance, None, 0, 255, cv2.NORM_MINMAX))
+
+    # Apply CLAHE
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    luminance_clahe = clahe.apply(luminance_8bit)
+
+    # Convert CLAHE output back to floating-point format
+    luminance_clahe = luminance_clahe.astype(np.float32) / 255.0
+
+    # Apply gamma correction on the CLAHE-enhanced luminance
+    gamma = 0.8  # Adjust gamma (values < 1 will increase brightness)
+    enhanced_luminance = np.power(luminance_clahe, gamma)
+
+    return enhanced_luminance
+
+# Enhance the luminance component with CLAHE and Gamma Correction
+enhanced_luminance = enhance_luminance_advanced(luminance)
+
+# Display the original and enhanced luminance images
+fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+ax[0].imshow(luminance, cmap='gray')
+ax[0].set_title('Original Luminance')
+ax[0].axis('off')
+
+ax[1].imshow(enhanced_luminance, cmap='gray')
+ax[1].set_title('Enhanced Luminance with CLAHE + Gamma Correction')
+ax[1].axis('off')
+
+plt.show()
+
+# Recombine the enhanced luminance with the original chrominance components
+def recombine_components(enhanced_luminance, chrominance):
+    # Ensure all components have the same size by resizing if necessary
+    h, w = chrominance[0].shape
+    enhanced_luminance_resized = cv2.resize(enhanced_luminance, (w, h))
+
+    # Convert all components to the same depth (8-bit format for display)
+    enhanced_luminance_8bit = np.uint8(cv2.normalize(enhanced_luminance_resized, None, 0, 255, cv2.NORM_MINMAX))
+    chrominance_8bit = [np.uint8(cv2.normalize(c, None, 0, 255, cv2.NORM_MINMAX)) for c in chrominance]
+
+    # Stack the enhanced luminance and original chrominance to form a YCrCb image
+    enhanced_ycrcb = cv2.merge([enhanced_luminance_8bit, chrominance_8bit[0], chrominance_8bit[1]])
+
+    # Convert back to RGB color space
+    enhanced_rgb = cv2.cvtColor(enhanced_ycrcb, cv2.COLOR_YCrCb2RGB)
+
+    return enhanced_rgb
+
+# Recombine components and get the final enhanced image
+enhanced_image = recombine_components(enhanced_luminance, [chrominance1, chrominance2])
+
+# Display the original and enhanced color images
+fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+ax[0].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+ax[0].set_title('Original Image')
+ax[0].axis('off')
+
+ax[1].imshow(enhanced_image)
+ax[1].set_title('Enhanced Image with CED')
+ax[1].axis('off')
+
+plt.show()
+
+# Apply Non-Local Means denoising on the enhanced image
+def apply_denoising(enhanced_image):
+    # Parameters for Non-Local Means (can be adjusted for more/less smoothing)
+    h = 10  # Filtering strength
+    templateWindowSize = 7  # Size of the window used for filtering a pixel
+    searchWindowSize = 21  # Size of the window used to search for similar blocks
+
+    # Apply the Non-Local Means Denoising filter
+    denoised_image = cv2.fastNlMeansDenoisingColored(enhanced_image, None, h, h, templateWindowSize, searchWindowSize)
+
+    return denoised_image
+
+# Denoise the enhanced image
+denoised_image = apply_denoising(enhanced_image)
+
+# Display the enhanced image before and after denoising
+fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+ax[0].imshow(enhanced_image)
+ax[0].set_title('Enhanced Image (Before Denoising)')
+ax[0].axis('off')
+
+ax[1].imshow(denoised_image)
+ax[1].set_title('Enhanced Image (After Denoising)')
+ax[1].axis('off')
+
+plt.show()
+
+from skimage.metrics import peak_signal_noise_ratio as psnr
+from skimage.metrics import structural_similarity as ssim
+
+# Function to evaluate image quality
+def evaluate_quality(original, processed):
+    # Convert images to grayscale for SSIM comparison
+    original_gray = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
+    processed_gray = cv2.cvtColor(processed, cv2.COLOR_RGB2GRAY)
+
+    # Calculate PSNR
+    psnr_value = psnr(original_gray, processed_gray)
+
+    # Calculate SSIM
+    ssim_value, _ = ssim(original_gray, processed_gray, full=True)
+
+    return psnr_value, ssim_value
+
+# Evaluate the quality of the denoised image compared to the original
+original_image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+psnr_value, ssim_value = evaluate_quality(original_image_rgb, denoised_image)
+
+# Display PSNR and SSIM results
+print(f"PSNR (Peak Signal-to-Noise Ratio): {psnr_value:.2f} dB")
+print(f"SSIM (Structural Similarity Index): {ssim_value:.4f}")
+
+# Display the original and denoised images for visual comparison
+fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+ax[0].imshow(original_image_rgb)
+ax[0].set_title('Original Image')
+ax[0].axis('off')
+
+ax[1].imshow(denoised_image)
+ax[1].set_title('Enhanced and Denoised Image')
+ax[1].axis('off')
+
+plt.show()
+
+# Convert image to Lab color space for better luminance-chrominance separation
+def enhance_image_lab_space(image):
+    # Convert the image to Lab color space
+    lab_image = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
+
+    # Split the Lab channels
+    L, a, b = cv2.split(lab_image)
+
+    # Apply CLAHE to the L channel for contrast enhancement
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced_L = clahe.apply(L)
+
+    # Merge the enhanced L with the original a and b channels
+    enhanced_lab_image = cv2.merge([enhanced_L, a, b])
+
+    # Convert back to RGB color space
+    enhanced_rgb_image = cv2.cvtColor(enhanced_lab_image, cv2.COLOR_Lab2BGR)
+
+    return enhanced_rgb_image
+
+# Apply the enhancement function on the original image
+enhanced_image_lab = enhance_image_lab_space(image)
+
+# Display the original and enhanced color images
+fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+ax[0].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+ax[0].set_title('Original Image')
+ax[0].axis('off')
+
+ax[1].imshow(cv2.cvtColor(enhanced_image_lab, cv2.COLOR_BGR2RGB))
+ax[1].set_title('Enhanced Image in Lab Space')
+ax[1].axis('off')
+
+plt.show()
