@@ -1,0 +1,577 @@
+//Module 1
+module wam_led ( // LED output
+input wire [7:0] holes,
+output wire [7:0] ld );
+assign ld = holes;
+endmodule // wam_led
+
+//Module 2
+module wam_obd( input wire [3:0] num, output reg [6:0] a2g); // 1-bit digital tube output
+always @(*) 
+  begin
+    case(num)
+      'h0: a2g=7'b0000001;
+      'h1: a2g=7'b1001111;
+      'h2: a2g=7'b0010010;
+      'h3: a2g=7'b0000110;
+      'h4: a2g=7'b1001100;
+      'h5: a2g=7'b0100100;
+      'h6: a2g=7'b0100000;
+      'h7: a2g=7'b0001111;
+      'h8: a2g=7'b0000000;
+      'h9: a2g=7'b0000100;
+      'hA: a2g=7'b1001000; // use A for H
+      'hB: a2g=7'b0011100; // use B for higher o
+      'hC: a2g=7'b0110001;
+      'hD: a2g=7'b1000010;
+      'hE: a2g=7'b0110000;
+      'hF: a2g=7'b1111111; // use F for blank
+      default: a2g=7'b1111111; // default is blank
+    endcase
+  end
+endmodule // wam_obd
+
+//Module 3 
+//digital first bit (hardness bit) flashing for tap or hardness change
+module wam_lst ( input wire clk_19, input wire [7:0] tap,
+input wire lft, input wire rgt, input wire cout0, output reg lstn);
+reg [3:0] cnt; // counter
+wire trg; // trigger signal
+wire cout0s; // cout0 signal conveter
+wam_tch tchc( .clk_19(clk_19), .btn(cout0), .tch(cout0s));
+assign trg = tap[0] | tap[1] | tap[2] | tap[3] | tap[4] | tap[5] | tap[6] | tap[7] | lft | rgt | cout0s;
+always @ (posedge clk_19) begin
+if (cnt > 0) begin // lasting
+if (cnt > 4'b0100) begin // long enough
+cnt <= 4'b0000;
+lstn <= 0; // dim
+end
+else begin
+cnt <= cnt + 1;
+end
+end
+else begin // idle
+if (trg) begin // if trigger then light up
+cnt <= 4'b0001;
+lstn <= 1;
+end
+end
+end
+endmodule // wam_lst
+
+//Module 4
+module wam_dis( // handle digital tube output
+input clk_16,
+input wire [3:0] hrdn,
+input wire [11:0] score,
+input wire lstn,
+output reg [3:0] an,
+output wire [6:0] a2g
+);
+reg [1:0] clk_16_cnt; // counter
+reg [3:0] dnum; // displaying number
+always @ (posedge clk_16) begin
+clk_16_cnt <= clk_16_cnt + 1;
+end
+always @(*) begin
+case(clk_16_cnt) // choose which tube to display
+2'b00: begin
+dnum = score[3:0];
+an = 4'b1110;
+end
+2'b01: begin
+dnum = score[7:4];
+an = 4'b1101;
+end
+2'b10: begin
+dnum = score[11:8];
+an = 4'b1011;
+end
+2'b11: begin
+dnum = hrdn;
+if (lstn)
+an = 4'b0111;
+else
+an = 4'b1111;
+end
+endcase
+end
+wam_obd obd( .num(dnum), .a2g(a2g) );
+endmodule // wam_dis
+
+//Module 5
+module wam_rdn( // generate 8-bit random number
+input wire clk, input wire load,
+input wire [7:0] seed, output reg [7:0] num);
+always @( posedge clk or posedge load ) begin
+if(load)
+num <= seed; // load seed
+else begin // shift with feed back
+num[0] <= num[7];
+num[1] <= num[0];
+num[2] <= num[1];
+num[3] <= num[2];
+num[4] <= num[3]^num[7];
+num[5] <= num[4]^num[7];
+num[6] <= num[5]^num[7];
+num[7] <= num[6];
+end
+end
+endmodule // wam_rdn
+
+//Module 6
+module wam_gen ( // control lives of moles
+input wire clk_19,
+input wire clr,
+input wire [31:0] clk_cnt,
+input wire [7:0] hit,
+input wire [3:0] hrdn,
+output reg [7:0] holes // which hole has moles
+);
+reg [2:0] clk_22_cnt; // clk_22 counter, 3 bits on 2^19
+reg [31:0] holes_cnt; // counter of roles, 3 bits for each hole on 2^22
+wire [7:0] rnum; // random number
+wire [3:0] age; // moles lifelength
+wire [7:0] rto; // moles appearance ratio
+reg [2:0] j; // select holes in different rounds
+integer i; // index for holes in one round
+// get parameters
+wam_par par( .hrdn(hrdn), .age(age), .rto(rto) );
+// make random number
+wam_rdn rdn( .clk(clk_cnt[21]), .load(clr), .seed(~clk_cnt[7:0]), .num(rnum) );
+// 1-phrase stage machine
+always @ ( posedge clk_19 or posedge clr ) begin
+if (clr) begin
+holes <= 8'b0;
+holes_cnt <= 32'b0;
+j <= 0;
+end
+else begin
+if (clk_22_cnt < 3'b111) begin // the clk_19 control
+clk_22_cnt <= clk_22_cnt + 1;
+for (i=0; i<8; i=i+1) begin
+if (hit[i]) begin // handle hit event
+holes_cnt[4*i+:4] <= 4'b0000;
+holes[i] <= 0;
+end
+end
+end
+else begin // the clk_22 control
+clk_22_cnt <= 3'b000;
+for (i=0; i<8; i=i+1) begin
+if (holes[i] > 0) begin // already have mole
+if ((holes_cnt[4*i+:4] > age) || hit[i]) begin // age decide moles' life
+holes_cnt[4*i+:4] <= 4'b0000;
+holes[i] <= 0;
+end
+else begin // count moles' life
+holes_cnt[4*i+:4] <= holes_cnt[4*i+:4] + 1;
+end
+end
+else begin // no mole yet
+if (rnum < rto) begin // rto decide new mole or not
+if (j==i) begin // new mole in random hole j
+holes_cnt[4*i+:4] <= 4'b0001;
+holes[i] <= 1;
+end
+end
+end
+end
+j <= j + 1;
+end
+end
+end
+endmodule // wam_gen
+
+//Module 7
+module wam_tap ( // input switch
+input wire clk_19,
+input wire [7:0] sw,
+output reg [7:0] tap // active high
+);
+reg [7:0] sw_pre; // last status
+wire [7:0] sw_edg; // bilateral edge trigger
+reg [31:0] sw_cnt; // state machine counter
+integer i; // switch selector
+always @(posedge clk_19) // bilateral edge detection
+sw_pre <= sw;
+assign sw_edg = ((sw_pre) & (~sw)) | ((~sw_pre) & (sw));
+always @ (posedge clk_19) begin
+for (i=0; i<8; i=i+1) begin
+if (sw_cnt[4*i+:4] > 0) begin // filtering
+if (sw_cnt[4*i+:4] > 4'b0100) begin // stable
+sw_cnt[4*i+:4] <= 4'b0000;
+tap[i] <= 1; // output status
+end
+else begin
+if (sw_edg[i]) begin // if switch then back to idle
+sw_cnt[4*i+:4] <= 0;
+end
+else begin // count
+sw_cnt[4*i+:4] <= sw_cnt[4*i+:4] + 1;
+end
+end
+end
+else begin // idle
+tap[i] <= 0;
+if (sw_edg[i]) begin // if switch then start filtering
+sw_cnt[4*i+:4] <= 4'b0001;
+end
+end
+end
+end
+endmodule // wam_tap
+
+//Module 8
+module wam_hit ( // get successful hit condition
+input wire clk_19,
+input wire [7:0] tap,
+input wire [7:0] holes,
+output reg [7:0] hit // effective hit
+);
+reg [7:0] holes_pre; // holes last status
+always @ (posedge clk_19) begin
+hit <= tap & holes_pre; // both tap and have mole, then is successful hit
+holes_pre <= holes; // save hole status
+end
+endmodule // wam_hit
+
+//Module 9
+module wam_tch ( // input button
+input wire clk_19,
+input wire btn,
+output reg tch // active high
+);
+reg btn_pre; // button last status
+wire btn_edg; // posedge trigger
+reg [3:0] btn_cnt; // counter
+always @(posedge clk_19) // posedge detection
+btn_pre <= btn;
+assign btn_edg = (~btn_pre) & (btn);
+always @ (posedge clk_19) begin
+if (btn_cnt > 0) begin // filtering
+if (btn_cnt > 4'b0100) begin // stable
+btn_cnt <= 4'b0000;
+tch <= 1; // output status
+end
+else begin
+if (btn_edg) begin // if button then back to idle
+btn_cnt <= 0;
+end
+else begin // count
+btn_cnt <= btn_cnt + 1;
+end
+end
+end
+else begin // idle
+tch <= 0;
+if (btn_edg) begin // if button pressed then start filtering
+btn_cnt <= 4'b0001;
+end
+end
+end
+endmodule // wam_tch
+
+//Module 10
+module wam_hrd ( // hardness control
+input wire clk_19,
+input wire clr,
+input wire lft,
+input wire rgt,
+input wire cout0,
+output reg [3:0] hrdn // hardness of 0~9 or H (hard)
+);
+wire lfts; // stable left button
+wire rgts; // stable right button
+wire cout0s; // shorter carry signal
+wire harder;
+wire easier;
+wam_tch tchl( .clk_19(clk_19), .btn(lft), .tch(lfts));
+wam_tch tchr( .clk_19(clk_19), .btn(rgt), .tch(rgts));
+wam_tch tchc( .clk_19(clk_19), .btn(cout0), .tch(cout0s));
+assign easier = lfts;
+assign harder = rgts | cout0s;
+always @ (posedge clk_19) begin
+if (clr)
+hrdn <= 0;
+else if (easier) begin // lft: easier
+if (hrdn > 0) begin
+hrdn <= hrdn - 1'd1;
+end
+end
+else if (harder) begin // rgt or cout0: harder
+if (hrdn < 10) begin
+hrdn <= hrdn + 1'd1;
+end
+end
+end
+endmodule // wam_hrd
+
+//Module 11
+module wam_par ( // decide hardness parameters
+input wire [3:0] hrdn,
+output reg [3:0] age,
+output reg [7:0] rto
+);
+always @ ( * ) begin
+case (hrdn)
+'h0: begin
+age <= 4'd14;
+rto <= 42;
+end
+'h1: begin
+age <= 4'd11;
+rto <= 62;
+end
+'h2: begin
+age <= 4'd09;
+rto <= 76;
+end
+'h3: begin
+age <= 4'd07;
+rto <= 87;
+end
+'h4: begin
+age <= 4'd06;
+rto <= 93;
+end
+'h5: begin
+age <= 4'd05;
+rto <= 96;
+end
+'h6: begin
+age <= 4'd04;
+rto <= 93;
+end
+'h7: begin
+age <= 4'd04;
+rto <= 87;
+end
+'h8: begin
+age <= 4'd03;
+rto <= 76;
+end
+'h9: begin
+age <= 4'd03;
+rto <= 61;
+end
+'hA: begin
+age <= 4'd02;
+rto <= 93;
+end
+default: begin
+age <= 4'b0111;
+rto <= 70;
+end
+endcase
+end
+endmodule // wam_par
+
+//Module 12
+`timescale 1ns / 1ps
+module wam_m(
+input wire clk, // clock (50MHz)
+input wire clr, // button - clear
+input wire lft, // button - left
+input wire rgt, // button - right
+input wire pse, // button - pause
+input wire [7:0] sw, // switch
+output wire [3:0] an, // digital tube - analog
+output wire [6:0] a2g, // digital tube - stroke
+output wire [7:0] ld // LED
+);
+reg [31:0] clk_cnt; // clock count
+wire clk_16; // clock at 2^16 (800Hz)
+reg clk_19; // clock at 2^19 (100Hz)
+reg pse_flg; // pause flag
+wire cout0; // carry signal
+wire lstn; // digital tube last signal
+wire [3:0] hrdn; // hardness of 0~9
+wire [7:0] holes; // 8 holes idicating have moles or not
+wire [7:0] tap; // 8 switch hit input
+wire [7:0] hit; // 8 successful hit
+wire [11:0] score; // score
+// handle clock
+always @(posedge clk) begin
+// if(clr) // DO NOT clear main clock as it is seed of randomizer
+// clk_cnt = 0;
+// else begin
+clk_cnt = clk_cnt + 1;
+if(clk_cnt[31:28]>15)
+clk_cnt = 0;
+end
+assign clk_16 = clk_cnt[16];
+// handle pause for clk_19
+always @ (posedge pse) begin
+pse_flg = ~pse_flg;
+end
+always @ (posedge clk) begin
+if (!pse_flg)
+clk_19 = clk_cnt[19];
+end
+// generate moles
+wam_gen sub_gen( .clk_19(clk_19), .clr(clr), .clk_cnt(clk_cnt), .hit(hit), .hrdn(hrdn), .holes(holes) );
+wam_hrd sub_hrd( .clk_19(clk_19), .clr(clr), .lft(lft), .rgt(rgt), .cout0(cout0), .hrdn(hrdn) );
+// handle input tap
+wam_tap sub_tap( .clk_19(clk_19), .sw(sw), .tap(tap) );
+wam_hit sub_hit( .clk_19(clk_19), .tap(tap), .holes(holes), .hit(hit) );
+// handle score count
+wam_scr sub_scr( .clk(clk), .clr(clr), .hit(hit), .num(score), .cout0(cout0) );
+// handle display on digital tube
+wam_led sub_led( .holes(holes), .ld(ld) );
+wam_lst sub_lst( .clk_19(clk_19), .tap(tap), .lft(lft), .rgt(rgt), .cout0(cout0), .lstn(lstn) );
+wam_dis sub_dis( .clk_16(clk_16), .hrdn(hrdn), .score(score), .lstn(lstn), .an(an), .a2g(a2g) );
+endmodule
+
+//Module 13
+module wam_cnt( // 1-bit 0-to-9 counter
+input wire clr, input wire cin,
+output reg cout, // carry bit
+output reg [3:0] num // DEC number in BCD
+);
+always @(posedge cin or posedge clr) begin
+if (clr)
+begin
+num <= 0;
+end
+else
+begin
+if (num < 9)
+begin
+num <= num + 1;
+cout <= 0;
+end
+else
+begin
+num <= 0;
+cout <= 1;
+end
+end
+end
+endmodule // wam_cnt
+
+//Module 14
+module wam_scr( // score count
+input wire clk, // synchronize clock
+input wire clr,
+input wire [7:0] hit,
+output reg [11:0] num,
+output wire cout0 // carry bit on 10s is a hardness control signal
+);
+wire [11:0] cnum; // counter number register
+wire cout1, cout2; // carry bits as trigger of next counter
+wire scr;
+assign scr = hit[0] | hit[1] | hit[2] | hit[3] | hit[4] | hit[5] | hit[6] | hit[7];
+wam_cnt cnt0( .clr(clr), .cin(scr), .cout(cout0), .num(cnum[3:0]) );
+wam_cnt cnt1( .clr(clr), .cin(cout0), .cout(cout1), .num(cnum[7:4]) );
+wam_cnt cnt2( .clr(clr), .cin(cout1), .cout(cout2), .num(cnum[11:8]) );
+always @(posedge clk) begin
+num <= cnum; // synchronize clock
+end
+endmodule // wam_scr
+
+//Module 15 ( FSM )
+module wam_fsm (input wire clk_19,
+input wire clr, input wire [7:0] sw,
+input wire [7:0] tap, input wire [7:0] holes,
+output reg [7:0] hit, output reg [7:0] holes_out,
+output reg [3:0] hrdn_out);
+reg [1:0] state;
+reg [7:0] tap_reg;
+reg [7:0] holes_reg;
+reg [7:0] hit_reg;
+reg [3:0] hrdn_reg;
+// FSM states
+parameter IDLE = 2'b00;
+parameter HIT_DETECTED = 2'b01;
+parameter HIT_CONFIRMED = 2'b10;
+always @(posedge clk_19) begin
+if (clr) begin
+state <= IDLE;
+tap_reg <= 8'b0;
+holes_reg <= 8'b0;
+hit_reg <= 8'b0;
+hrdn_reg <= 4'b0;
+end
+else begin
+case (state)
+IDLE: begin
+tap_reg <= tap;
+holes_reg <= holes;
+hrdn_reg <= hrdn_out;
+if (tap_reg != 8'b0) begin
+state <= HIT_DETECTED;
+end
+end
+HIT_DETECTED: begin
+if (tap_reg == 8'b0) begin
+state <= IDLE;
+end
+else if (tap_reg & holes_reg != 8'b0) begin
+state <= HIT_CONFIRMED;
+hit_reg <= tap_reg & holes_reg;
+end
+end
+HIT_CONFIRMED: begin
+if (tap_reg == 8'b0) begin
+state <= IDLE;
+end
+else if (hit_reg != 8'b0) begin
+state <= HIT_CONFIRMED;
+end
+else begin
+state <= HIT_DETECTED;
+end
+end
+endcase
+end
+end
+always @(posedge clk_19) begin
+case (state)
+IDLE: begin
+holes_out <= holes_reg;
+hit <= 8'b0;
+end
+HIT_DETECTED: begin
+holes_out <= holes_reg;
+hit <= 8'b0;
+end
+HIT_CONFIRMED: begin
+holes_out <= holes_reg & ~hit_reg;
+hit <= hit_reg;
+end
+endcase
+end
+endmodule
+
+//Module 16 (Score keeper)
+module WhackAMole(input clk, input start, input whack, output reg game_over);
+reg [3:0] lives_reg;
+reg [3:0] whacks_reg;
+reg [3:0] moles_reg;
+wire [3:0] moles_next;
+always @(posedge clk) begin
+if (start) begin
+lives_reg <= 4'b0100;
+whacks_reg <= 4'b0000;
+moles_reg <= 4'b0101;
+end else begin
+lives_reg <= lives_reg;
+whacks_reg <= whack ? whacks_reg + 1 : whacks_reg;
+moles_reg <= moles_next;
+end
+end
+assign moles_next = {moles_reg[2:0], moles_reg[3]};
+always @(posedge clk) begin
+if (whack && moles_reg[3]) begin
+lives_reg <= lives_reg - 1;
+end
+end
+always @(posedge clk) begin
+if (lives_reg == 4'b0000) begin
+game_over <= 1;
+end else begin
+game_over <= 0;
+end
+end
+endmodule
